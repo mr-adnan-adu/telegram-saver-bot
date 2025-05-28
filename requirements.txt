@@ -1,13 +1,2 @@
-# Telegram Bot Dependencies
-python-telegram-bot>=20.0
-telethon>=1.24.0
-
-# Core Python dependencies (usually included but specified for clarity)
-asyncio
-logging
-re
-time
-datetime
-typing
-dataclasses
-urllib3
+python-telegram-bot==20.8
+telethon==1.37.0
