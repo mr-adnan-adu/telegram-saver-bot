@@ -755,46 +755,46 @@ The message has been processed and saved to your account.
         )
 
     async def handle_code_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE, code: str):
-        """Handle verification code input during login"""
-        user_id = update.effective_user.id
-        session = self.user_sessions[user_id]
-        
-        # Validate code format
-        if not re.match(r'^\d{5}, code.strip()):
-            await update.message.reply_text(
-                "❌ **Invalid Code Format**\n\n"
-                "Please send the 5-digit verification code.\n"
-                "Example: `12345`\n\n"
-                "Check your messages and try again:"
-            )
-            return
-        
-        # Simulate code verification
-        await asyncio.sleep(0.5 if user_id == self.owner_id else 1)
-        
-        # For demo purposes, accept any 5-digit code
-        session.login_step = "none"
-        
-        success_msg = "🎉 **Login Successful!**\n\n"
-        if user_id == self.owner_id:
-            success_msg += "👑 **Owner Login Complete!** All admin privileges activated.\n\n"
-        
-        success_msg += ("✅ You're now connected to Telegram!\n"
-                       "🔒 You can now access private channels and groups.\n\n"
-                       "**What's Next:**\n"
-                       "• Send any private channel link to save messages\n"
-                       "• Use /status to check your connection\n"
-                       "• Use /logout when you're done\n\n")
-        
-        if user_id == self.owner_id:
-            success_msg += "👑 Owner benefits: Unlimited saves, priority processing! 🚀"
-        else:
-            success_msg += "Happy saving! 🚀"
-        
+    """Handle verification code input during login"""
+    user_id = update.effective_user.id
+    session = self.user_sessions[user_id]
+    
+    # Validate code format
+    if not re.match(r'^\d{5}$', code.strip()):
         await update.message.reply_text(
-            success_msg,
-            parse_mode=ParseMode.MARKDOWN
+            "❌ **Invalid Code Format**\n\n"
+            "Please send the 5-digit verification code.\n"
+            "Example: `12345`\n\n"
+            "Check your messages and try again:"
         )
+        return
+    
+    # Simulate code verification
+    await asyncio.sleep(0.5 if user_id == self.owner_id else 1)
+    
+    # For demo purposes, accept any 5-digit code
+    session.login_step = "none"
+    
+    success_msg = "🎉 **Login Successful!**\n\n"
+    if user_id == self.owner_id:
+        success_msg += "👑 **Owner Login Complete!** All admin privileges activated.\n\n"
+    
+    success_msg += ("✅ You're now connected to Telegram!\n"
+                    "🔒 You can now access private channels and groups.\n\n"
+                    "**What's Next:**\n"
+                    "• Send any private channel link to save messages\n"
+                    "• Use /status to check your connection\n"
+                    "• Use /logout when you're done\n\n")
+    
+    if user_id == self.owner_id:
+        success_msg += "👑 Owner benefits: Unlimited saves, priority processing! 🚀"
+    else:
+        success_msg += "Happy saving! 🚀"
+    
+    await update.message.reply_text(
+        success_msg,
+        parse_mode=ParseMode.MARKDOWN
+    )
 
     async def handle_password_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE, password: str):
         """Handle 2FA password input during login"""
