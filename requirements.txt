@@ -1,3 +1,5 @@
-python-telegram-bot==20.8
-telethon==1.37.0
-python-dotenv==1.0.1
+python-telegram-bot==20.7
+python-dotenv==1.0.0
+redis==5.0.1
+aiohttp==3.9.1
+asyncio-throttle==1.0.2
