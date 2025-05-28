@@ -284,14 +284,71 @@ Happy saving! 🚀
         data = query.data
         
         if data == "start_login":
-            await self.login_command(update, context)
+            # Create a fake update object for the login command
+            fake_update = Update(
+                update_id=update.update_id,
+                message=query.message
+            )
+            fake_update.effective_user = query.from_user
+            await self.login_command(fake_update, context)
+            
         elif data == "get_token":
-            await self.token_command(update, context)
+            fake_update = Update(
+                update_id=update.update_id,
+                message=query.message
+            )
+            fake_update.effective_user = query.from_user
+            await self.token_command(fake_update, context)
+            
         elif data == "help":
-            await self.help_command(update, context)
+            fake_update = Update(
+                update_id=update.update_id,
+                message=query.message
+            )
+            fake_update.effective_user = query.from_user
+            await self.help_command(fake_update, context)
+            
         elif data == "owner_dashboard" and user_id == self.owner_id:
-            await self.owner_command(update, context)
-        # Add more callback handlers as needed
+            fake_update = Update(
+                update_id=update.update_id,
+                message=query.message
+            )
+            fake_update.effective_user = query.from_user
+            await self.owner_command(fake_update, context)
+            
+        elif data == "view_status":
+            fake_update = Update(
+                update_id=update.update_id,
+                message=query.message
+            )
+            fake_update.effective_user = query.from_user
+            await self.status_command(fake_update, context)
+            
+        elif data == "start_using":
+            await query.edit_message_text(
+                "🚀 **Ready to Save Messages!**\n\n"
+                "Simply send me any Telegram post link and I'll save it for you!\n\n"
+                "Example: `https://t.me/channel_name/123`\n\n"
+                "For private channels, use /login first.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            
+        elif data == "save_another":
+            await query.edit_message_text(
+                "📱 **Ready for Another Save!**\n\n"
+                "Send me another Telegram post link to save more content.\n\n"
+                "I support:\n"
+                "• Public channel links\n"
+                "• Private channel links (with login)\n"
+                "• Group message links",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            
+        else:
+            await query.edit_message_text(
+                "⚠️ This feature is coming soon!\n"
+                "Use /help to see available commands."
+            )
 
     # Include all other methods from your original code here...
     # (login_command, logout_command, status_command, token_command, etc.)
@@ -462,7 +519,313 @@ The message has been processed and saved to your account.
                 "Please try again or contact support."
             )
 
-    # Add all other methods from your original code...
+    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /help command"""
+        user_id = update.effective_user.id
+        
+        # Different help text for owner
+        if user_id == self.owner_id:
+            help_text = """
+📚 **Bot Commands & Usage** 👑
+
+**🔧 Basic Commands:**
+• `/start` - Welcome message and owner dashboard
+• `/help` - Show this help message
+• `/login` - Login to your Telegram account for private channels
+• `/logout` - Logout from your Telegram account
+• `/status` - Check your login and premium status
+
+**👑 Owner Commands:**
+• `/owner` - Access owner dashboard and controls
+• `/stats` - View detailed bot statistics
+• `/broadcast` - Send broadcast message to all users
+
+**📝 How to Use:**
+1️⃣ **Any Channel:** Just send any post link! (Unlimited access)
+   Example: `https://t.me/channel_name/123`
+
+2️⃣ **Private Channels:** 
+   • Use `/login` to authenticate (if needed)
+   • Send private channel links
+
+**👑 Owner Privileges:**
+• Unlimited saves per day (no restrictions)
+• Fastest processing speed
+• All premium features always active
+• Admin dashboard and controls
+• User management capabilities
+
+You have unlimited access to everything! 🚀👑
+            """
+        else:
+            help_text = """
+📚 **Bot Commands & Usage**
+
+**🔧 Basic Commands:**
+• `/start` - Welcome message and quick setup
+• `/help` - Show this help message
+• `/login` - Login to your Telegram account for private channels
+• `/logout` - Logout from your Telegram account
+• `/status` - Check your login and premium status
+
+**💎 Premium Commands:**
+• `/token` - Enter premium token for 3 hours free access
+• `/upgrade` - Get information about premium upgrade
+• `/premium` - Check premium status and benefits
+
+**📝 How to Use:**
+1️⃣ **For Public Channels:** Just send any post link!
+   Example: `https://t.me/channel_name/123`
+
+2️⃣ **For Private Channels:** 
+   • First run `/login` and authenticate
+   • Then send private channel links
+
+3️⃣ **Supported Link Formats:**
+   • `https://t.me/channel_name/post_id`
+   • `https://t.me/c/channel_id/post_id`
+   • Direct message forwarding
+
+**⚡ Premium Benefits:**
+• Unlimited saves per day
+• Faster processing speed
+• Priority support
+• Access to private channels
+• Batch download support
+
+Need more help? Contact support: @YourSupportUsername
+            """
+        
+        keyboard = [
+            [InlineKeyboardButton("🚀 Start Using Bot", callback_data="start_using")],
+        ]
+        
+        if user_id != self.owner_id:
+            keyboard.append([InlineKeyboardButton("💎 Get Premium", callback_data="get_premium")])
+        else:
+            keyboard.append([InlineKeyboardButton("👑 Owner Dashboard", callback_data="owner_dashboard")])
+            
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
+            help_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=reply_markup
+        )
+
+    async def logout_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /logout command"""
+        user_id = update.effective_user.id
+        
+        if user_id in self.user_sessions:
+            session = self.user_sessions[user_id]
+            if session.client:
+                try:
+                    await session.client.disconnect()
+                except:
+                    pass
+            
+            # For owner, keep the session but reset client
+            if user_id == self.owner_id:
+                session.client = None
+                session.login_step = "none"
+                # Keep premium status for owner
+            else:
+                del self.user_sessions[user_id]
+        
+        logout_msg = "👋 Successfully logged out!\n"
+        if user_id == self.owner_id:
+            logout_msg += "👑 Owner premium privileges remain active.\n"
+        logout_msg += "Use /login to connect again when needed."
+        
+        await update.message.reply_text(logout_msg)
+
+    async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /status command"""
+        user_id = update.effective_user.id
+        
+        # Setup owner session if needed
+        self.setup_owner_session(user_id)
+        
+        # Login status
+        login_status = "❌ Not logged in"
+        if user_id in self.user_sessions:
+            session = self.user_sessions[user_id]
+            if session.client and hasattr(session.client, '_connected') and session.client._connected:
+                login_status = "✅ Logged in"
+        
+        # Premium status
+        premium_status = "❌ Free user"
+        premium_info = ""
+        
+        if user_id == self.owner_id:
+            premium_status = "👑 Owner - Unlimited Premium Forever"
+        elif user_id in self.user_sessions:
+            session = self.user_sessions[user_id]
+            if session.is_premium:
+                if session.premium_expires and session.premium_expires > datetime.now():
+                    time_left = session.premium_expires - datetime.now()
+                    hours_left = int(time_left.total_seconds() // 3600)
+                    premium_status = f"💎 Premium active ({hours_left}h left)"
+                elif session.premium_expires is None:
+                    premium_status = "💎 Premium (unlimited)"
+        
+        usage_limit = "∞" if user_id == self.owner_id else ("∞" if self.is_premium_user(user_id) else "10")
+        
+        status_text = f"""
+📊 **Your Status**
+
+**🔐 Login Status:** {login_status}
+**💎 Premium Status:** {premium_status}
+
+**📈 Today's Usage:**
+• Messages saved: 0/{usage_limit} {'(Owner Unlimited)' if user_id == self.owner_id else '(Premium)' if self.is_premium_user(user_id) else '(Free)'}
+• Private channels accessed: {'Always Available (Owner)' if user_id == self.owner_id else 'Available with login'}
+
+**💡 Tips:**
+"""
+        
+        if user_id == self.owner_id:
+            status_text += "• 👑 You have unlimited access to all features\n• Use /owner for admin dashboard\n• All restrictions are bypassed for you"
+        else:
+            status_text += "• Use /login to access private channels\n• Use /token for 3 hours of free premium\n• Use /upgrade for unlimited premium access"
+        
+        keyboard = []
+        if user_id == self.owner_id:
+            keyboard.append([InlineKeyboardButton("👑 Owner Dashboard", callback_data="owner_dashboard")])
+        else:
+            if login_status == "❌ Not logged in":
+                keyboard.append([InlineKeyboardButton("📱 Login Now", callback_data="start_login")])
+            if "❌ Free user" in premium_status:
+                keyboard.append([InlineKeyboardButton("💎 Get Premium", callback_data="get_token")])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+        
+        await update.message.reply_text(
+            status_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=reply_markup
+        )
+
+    async def token_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /token command"""
+        user_id = update.effective_user.id
+        
+        # Owner doesn't need tokens
+        if user_id == self.owner_id:
+            await update.message.reply_text(
+                "👑 **Owner Notice**\n\n"
+                "You already have unlimited premium access forever!\n"
+                "No tokens needed for the bot owner. 🚀",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
+        
+        if len(context.args) == 0:
+            keyboard = [
+                [InlineKeyboardButton("🎫 Enter Token", callback_data="enter_token")],
+                [InlineKeyboardButton("❓ How to Get Token?", callback_data="token_help")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update.message.reply_text(
+                "🎫 **Premium Token Access**\n\n"
+                "Enter your premium token to get 3 hours of free access!\n\n"
+                "**Available Tokens:**\n"
+                "• `PREMIUM2024` - 3 hours premium\n"
+                "• `SAVE3HOURS` - 3 hours premium\n"
+                "• `FREEACCESS` - 3 hours premium\n\n"
+                "Use: `/token YOUR_TOKEN_HERE`",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=reply_markup
+            )
+            return
+        
+        token = context.args[0].upper()
+        
+        if token in self.premium_tokens:
+            if user_id not in self.user_sessions:
+                self.user_sessions[user_id] = UserSession()
+            
+            session = self.user_sessions[user_id]
+            session.is_premium = True
+            session.premium_expires = datetime.now() + timedelta(hours=3)
+            
+            await update.message.reply_text(
+                "🎉 **Token Activated Successfully!**\n\n"
+                "💎 You now have **3 hours** of premium access!\n\n"
+                "**Premium Benefits Unlocked:**\n"
+                "✅ Unlimited message saves\n"
+                "✅ Faster processing\n"
+                "✅ Priority support\n"
+                "✅ Private channel access (with login)\n\n"
+                "Enjoy your premium experience! 🚀",
+                parse_mode=ParseMode.MARKDOWN
+            )
+        else:
+            await update.message.reply_text(
+                "❌ **Invalid Token**\n\n"
+                "The token you entered is not valid.\n"
+                "Please check the token and try again.\n\n"
+                "Use `/token` without arguments to see available tokens.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+
+    async def owner_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /owner command - Owner only"""
+        user_id = update.effective_user.id
+        
+        if user_id != self.owner_id:
+            await update.message.reply_text(
+                "❌ This command is only available to the bot owner.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
+        
+        # Owner dashboard
+        total_users = len(self.user_sessions)
+        premium_users = sum(1 for session in self.user_sessions.values() if session.is_premium)
+        logged_in_users = sum(1 for session in self.user_sessions.values() 
+                             if session.client and hasattr(session.client, '_connected') and session.client._connected)
+        
+        owner_text = f"""
+👑 **Owner Dashboard**
+
+**📊 Bot Statistics:**
+• Total Users: {total_users}
+• Premium Users: {premium_users}
+• Logged In Users: {logged_in_users}
+• Bot Uptime: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+**🔧 Your Status:**
+• Owner Privileges: ✅ Active
+• Premium Access: ✅ Unlimited Forever
+• Login Status: {'✅ Connected' if user_id in self.user_sessions and self.user_sessions[user_id].client else '❌ Not Connected'}
+
+**⚡ Quick Actions:**
+• Use /stats for detailed statistics
+• Use /broadcast to message all users
+• All premium features are always available
+
+**💡 Owner Benefits:**
+• No usage limits or restrictions
+• Priority processing for all requests
+• Access to admin and monitoring tools
+• Unlimited saves from any channel
+        """
+        
+        keyboard = [
+            [InlineKeyboardButton("📊 Detailed Stats", callback_data="detailed_stats")],
+            [InlineKeyboardButton("📢 Broadcast Message", callback_data="start_broadcast")],
+            [InlineKeyboardButton("👥 User Management", callback_data="user_management")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
+            owner_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=reply_markup
+        )
 
 def main():
     """Start the bot"""
@@ -476,7 +839,11 @@ def main():
         # Add handlers
         application.add_handler(CommandHandler("start", bot.start_command))
         application.add_handler(CommandHandler("login", bot.login_command))
+        application.add_handler(CommandHandler("logout", bot.logout_command))
         application.add_handler(CommandHandler("help", bot.help_command))
+        application.add_handler(CommandHandler("status", bot.status_command))
+        application.add_handler(CommandHandler("token", bot.token_command))
+        application.add_handler(CommandHandler("owner", bot.owner_command))
         application.add_handler(CallbackQueryHandler(bot.callback_handler))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
         
