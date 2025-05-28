@@ -754,7 +754,7 @@ The message has been processed and saved to your account.
             parse_mode=ParseMode.MARKDOWN
         )
 
-        async def handle_code_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE, code: str):
+            async def handle_code_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE, code: str):
         """Handle verification code input during login"""
         user_id = update.effective_user.id
         session = self.user_sessions[user_id]
