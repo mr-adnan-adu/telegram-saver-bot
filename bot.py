@@ -1,254 +1,119 @@
-import os
+# main.py - Production Telegram Bot
 import asyncio
 import logging
 import re
-import time
-from datetime import datetime, timedelta
-from typing import Dict, Optional, Set, Tuple
-from dataclasses import dataclass
-from urllib.parse import urlparse
-
+import os
+from typing import Dict, List
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application, CommandHandler, MessageHandler, 
-    filters, ContextTypes, CallbackQueryHandler
-)
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from telegram.constants import ParseMode
-from telethon import TelegramClient
-from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError
-from telethon.tl.types import Channel, Chat
+import json
+from datetime import datetime
+from dotenv import load_dotenv
+import redis
+from urllib.parse import urlparse
+import aiohttp
 
 # Load environment variables
-from dotenv import load_dotenv
 load_dotenv()
 
 # Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=logging.INFO,
+    handlers=[
+        logging.FileHandler('bot.log'),
+        logging.StreamHandler()
+    ]
 )
 logger = logging.getLogger(__name__)
 
-# Bot configuration with better validation
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-API_ID = os.getenv("API_ID")
-API_HASH = os.getenv("API_HASH")
-OWNER_ID = os.getenv("OWNER_ID")
-
-# Enhanced validation
-def validate_config():
-    """Validate all required configuration"""
-    errors = []
-    
-    if not BOT_TOKEN:
-        errors.append("BOT_TOKEN is required! Get it from @BotFather")
-    elif not re.match(r'^\d+:[A-Za-z0-9_-]+$', BOT_TOKEN):
-        errors.append("BOT_TOKEN format is invalid! Should be: 123456789:ABC-DEF...")
-    
-    if not API_ID:
-        errors.append("API_ID is required! Get it from https://my.telegram.org")
-    else:
-        try:
-            int(API_ID)
-        except ValueError:
-            errors.append("API_ID must be a number")
-    
-    if not API_HASH:
-        errors.append("API_HASH is required! Get it from https://my.telegram.org")
-    elif not re.match(r'^[a-f0-9]{32}$', API_HASH):
-        errors.append("API_HASH format seems invalid (should be 32 hex characters)")
-    
-    if not OWNER_ID:
-        errors.append("OWNER_ID is required! Your Telegram user ID")
-    else:
-        try:
-            int(OWNER_ID)
-        except ValueError:
-            errors.append("OWNER_ID must be a number")
-    
-    if errors:
-        print("❌ Configuration Errors:")
-        for error in errors:
-            print(f"   • {error}")
-        print("\n💡 Setup Guide:")
-        print("   1. Create .env file in your project directory")
-        print("   2. Add the following lines:")
-        print("      BOT_TOKEN=your_bot_token_from_botfather")
-        print("      API_ID=your_api_id_from_my_telegram_org")
-        print("      API_HASH=your_api_hash_from_my_telegram_org")
-        print("      OWNER_ID=your_telegram_user_id")
-        print("\n📚 How to get these values:")
-        print("   • BOT_TOKEN: Message @BotFather → /newbot")
-        print("   • API_ID & API_HASH: Visit https://my.telegram.org")
-        print("   • OWNER_ID: Message @userinfobot to get your ID")
-        raise SystemExit(1)
-
-# Validate configuration before proceeding
-validate_config()
-
-# Convert to proper types after validation
-API_ID = int(API_ID)
-OWNER_ID = int(OWNER_ID)
-
-@dataclass
-class UserSession:
-    """Store user session data"""
-    client: Optional[TelegramClient] = None
-    phone: Optional[str] = None
-    is_premium: bool = False
-    premium_expires: Optional[datetime] = None
-    login_step: str = "none"  # none, phone, code, password
-    is_owner: bool = False
-    daily_usage: int = 0
-    last_usage_reset: Optional[datetime] = None
-    
-class SaveAnyRestrictedBot:
+class TelegramPostSaver:
     def __init__(self):
-        self.user_sessions: Dict[int, UserSession] = {}
-        self.premium_tokens: Set[str] = {"PREMIUM2024", "SAVE3HOURS", "FREEACCESS"}
-        self.owner_id = OWNER_ID
-        self.start_time = datetime.now()
+        self.bot_token = os.getenv('BOT_TOKEN')
+        self.redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
+        self.webhook_url = os.getenv('WEBHOOK_URL')
+        self.port = int(os.getenv('PORT', 8000))
+        self.environment = os.getenv('ENVIRONMENT', 'development')
         
-    def reset_daily_usage_if_needed(self, user_id: int):
-        """Reset daily usage counter if it's a new day"""
-        if user_id in self.user_sessions:
-            session = self.user_sessions[user_id]
-            now = datetime.now()
-            
-            if (session.last_usage_reset is None or 
-                now.date() > session.last_usage_reset.date()):
-                session.daily_usage = 0
-                session.last_usage_reset = now
+        # Initialize Redis connection
+        self.redis_client = None
+        self.init_redis()
+        
+        if not self.bot_token:
+            raise ValueError("BOT_TOKEN environment variable is required!")
     
-    def can_use_bot(self, user_id: int) -> Tuple[bool, str]:
-        """Check if user can use the bot (rate limiting)"""
-        # Owner has unlimited access
-        if user_id == self.owner_id:
-            return True, "Owner - unlimited access"
-        
-        # Reset daily usage if needed
-        self.reset_daily_usage_if_needed(user_id)
-        
-        if user_id not in self.user_sessions:
-            self.user_sessions[user_id] = UserSession()
-        
-        session = self.user_sessions[user_id]
-        
-        # Premium users have higher limits
-        if self.is_premium_user(user_id):
-            if session.daily_usage >= 100:  # Premium limit
-                return False, "Premium daily limit reached (100)"
-            return True, f"Premium user - {100 - session.daily_usage} saves left today"
-        else:
-            if session.daily_usage >= 10:  # Free limit
-                return False, "Free daily limit reached (10). Use /token for premium access"
-            return True, f"Free user - {10 - session.daily_usage} saves left today"
+    def init_redis(self):
+        """Initialize Redis connection for data persistence"""
+        try:
+            if self.redis_url.startswith('redis://'):
+                self.redis_client = redis.from_url(self.redis_url, decode_responses=True)
+                self.redis_client.ping()
+                logger.info("✅ Redis connected successfully")
+            else:
+                logger.warning("⚠️ Redis not configured, using in-memory storage")
+        except Exception as e:
+            logger.error(f"❌ Redis connection failed: {e}")
+            logger.info("📝 Falling back to file-based storage")
     
-    def increment_usage(self, user_id: int):
-        """Increment user's daily usage counter"""
-        if user_id == self.owner_id:
-            return  # Owner has unlimited usage
-            
-        if user_id in self.user_sessions:
-            self.user_sessions[user_id].daily_usage += 1
-        
-    def is_premium_user(self, user_id: int) -> bool:
-        """Check if user has premium access (including owner)"""
-        if user_id == self.owner_id:
-            return True
-            
-        if user_id in self.user_sessions:
-            session = self.user_sessions[user_id]
-            if session.is_premium:
-                if session.premium_expires is None:  # Unlimited premium
-                    return True
-                elif session.premium_expires > datetime.now():  # Time-based premium
-                    return True
-                else:
-                    # Premium expired, reset
-                    session.is_premium = False
-                    session.premium_expires = None
-        return False
+    async def get_user_data(self, user_id: str) -> List:
+        """Get user's saved posts"""
+        try:
+            if self.redis_client:
+                data = self.redis_client.get(f"user:{user_id}:posts")
+                return json.loads(data) if data else []
+            else:
+                # Fallback to file storage
+                filename = f"user_{user_id}_posts.json"
+                if os.path.exists(filename):
+                    with open(filename, 'r', encoding='utf-8') as f:
+                        return json.load(f)
+                return []
+        except Exception as e:
+            logger.error(f"Error getting user data: {e}")
+            return []
     
-    def setup_owner_session(self, user_id: int):
-        """Setup unlimited premium session for owner"""
-        if user_id == self.owner_id:
-            if user_id not in self.user_sessions:
-                self.user_sessions[user_id] = UserSession()
-            session = self.user_sessions[user_id]
-            session.is_premium = True
-            session.premium_expires = None  # None means unlimited
-            session.is_owner = True
-        
+    async def save_user_data(self, user_id: str, posts: List):
+        """Save user's posts"""
+        try:
+            if self.redis_client:
+                self.redis_client.set(f"user:{user_id}:posts", json.dumps(posts))
+            else:
+                # Fallback to file storage
+                filename = f"user_{user_id}_posts.json"
+                with open(filename, 'w', encoding='utf-8') as f:
+                    json.dump(posts, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"Error saving user data: {e}")
+    
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start command"""
-        user_id = update.effective_user.id
+        user = update.effective_user
+        logger.info(f"User {user.id} ({user.username}) started the bot")
         
-        # Setup owner session if it's the owner
-        self.setup_owner_session(user_id)
-        
-        # Different welcome message for owner
-        if user_id == self.owner_id:
-            welcome_message = """
-🚀 **Welcome Back, Boss!** 👑
-
-**Owner Privileges Active:**
-🔹 Unlimited premium access forever
-🔹 All features unlocked without restrictions
-🔹 Priority processing and support
-🔹 Access to admin commands
-
-**What You Can Do:**
-🔹 Save posts from any channel (public/private) without limits
-🔹 Access private channels with /login
-🔹 Use all premium features immediately
-🔹 Monitor bot usage and stats
-
-**Admin Commands:**
-• `/owner` - View owner dashboard
-• `/stats` - View bot statistics
-• `/broadcast` - Send message to all users
-
-Ready to save unlimited content! 🚀👑
-            """
-        else:
-            welcome_message = """
-🚀 **Welcome to Channel Saver Bot!**
+        welcome_message = """
+🚀 **Welcome to Post Saver Bot!** 
 
 **What I Can Do:**
-🔹 Save posts from channels and groups where forwarding is restricted
-🔹 Easily fetch messages from public channels by sending their post links
-🔹 For private channels, use /login to access content securely
-🔹 Need assistance? Just type /help and I'll guide you!
+✨ Save posts from channels and groups where forwarding is restricted
+✨ Easily fetch messages from public channels by sending their post links
+✨ For private channels, use /login to access content securely
+✨ Need assistance? Just type /help and I'll guide you!
 
-💎 **Premium Features:**
-🔹 Use /token to get 3 hours of free premium access
-🔹 Want unlimited access? Run /upgrade to unlock premium features
-🔹 Premium users enjoy faster processing, unlimited saves, and priority support
+Premium users enjoy faster processing, unlimited saves, and priority support.
 
 📌 **Getting Started:**
 ✅ Send a post link from a public channel to save it instantly
-✅ If the channel is private, log in using /login before sending the link
 ✅ For additional commands, check /help anytime!
 
 Happy saving! 🚀
-            """
+        """
         
-        # Different keyboard for owner
-        if user_id == self.owner_id:
-            keyboard = [
-                [InlineKeyboardButton("👑 Owner Dashboard", callback_data="owner_dashboard")],
-                [InlineKeyboardButton("📊 Bot Statistics", callback_data="bot_stats")],
-                [InlineKeyboardButton("📱 Login to Telegram", callback_data="start_login")],
-                [InlineKeyboardButton("❓ Help & Commands", callback_data="help")]
-            ]
-        else:
-            keyboard = [
-                [InlineKeyboardButton("📱 Login to Telegram", callback_data="start_login")],
-                [InlineKeyboardButton("💎 Get Premium Token", callback_data="get_token")],
-                [InlineKeyboardButton("❓ Help & Commands", callback_data="help")]
-            ]
-        
+        keyboard = [
+            [InlineKeyboardButton("📋 Help", callback_data="help"),
+             InlineKeyboardButton("💾 My Saves", callback_data="my_saves")],
+            [InlineKeyboardButton("⭐ Premium", callback_data="premium")]
+        ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await update.message.reply_text(
@@ -256,206 +121,510 @@ Happy saving! 🚀
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=reply_markup
         )
+    
+    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /help command"""
+        help_text = """
+📖 **Bot Commands & Features:**
 
-    async def handle_telegram_link(self, update: Update, context: ContextTypes.DEFAULT_TYPE, link: str):
-        """Handle Telegram channel/group links with better error handling"""
-        user_id = update.effective_user.id
+🔗 **Send a Link**: Just paste any Telegram post link and I'll save it for you!
+
+**Commands:**
+• `/start` - Welcome message and main menu
+• `/help` - Show this help message
+• `/login` - Login to access private channels (Premium)
+• `/saves` - View your saved posts
+• `/delete <id>` - Delete a saved post
+• `/clear` - Clear all your saved posts
+• `/premium` - Upgrade to premium
+• `/stats` - View your usage statistics
+
+**Supported Links:**
+• `t.me/channel/123` - Public channel posts
+• `t.me/c/123456/789` - Private channel posts (with login)
+
+**Premium Features:**
+⚡ Unlimited saves
+🚀 Faster processing
+🔐 Private channel access
+💬 Priority support
+📊 Advanced analytics
+
+Need more help? Contact @support
+        """
         
-        # Check if user can use the bot
-        can_use, message = self.can_use_bot(user_id)
-        if not can_use:
+        await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
+    
+    async def stats_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /stats command"""
+        user_id = str(update.effective_user.id)
+        posts = await self.get_user_data(user_id)
+        
+        total_saves = len(posts)
+        today_saves = len([p for p in posts if p.get('saved_date', '').startswith(datetime.now().strftime('%Y-%m-%d'))])
+        
+        stats_text = f"""
+📊 **Your Statistics**
+
+📈 **Total Saves**: {total_saves}
+📅 **Today**: {today_saves}
+💾 **Storage Used**: {len(str(posts))} bytes
+⏰ **Member Since**: {posts[0].get('saved_date', 'Unknown')[:10] if posts else 'Today'}
+
+**Recent Activity:**
+        """
+        
+        # Add recent activity
+        recent_posts = posts[-5:] if posts else []
+        for i, post in enumerate(reversed(recent_posts), 1):
+            channel = post.get('channel', 'Unknown')[:20]
+            date = post.get('saved_date', '')[:16]
+            stats_text += f"\n{i}. {channel} - {date}"
+        
+        if not recent_posts:
+            stats_text += "\nNo recent activity"
+        
+        keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="start")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
+            stats_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=reply_markup
+        )
+    
+    async def saves_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /saves command"""
+        user_id = str(update.effective_user.id)
+        posts = await self.get_user_data(user_id)
+        
+        if not posts:
             await update.message.reply_text(
-                f"❌ **Usage Limited**\n\n{message}\n\n"
-                "💎 Get premium access with `/token` command!",
+                "📭 **No saved posts yet!**\n\nSend me a Telegram post link to get started!",
                 parse_mode=ParseMode.MARKDOWN
             )
             return
         
-        # Show processing message
-        processing_msg_text = "⏳ Processing your request...\n🔍 Analyzing the link and fetching content..."
-        if user_id == self.owner_id:
-            processing_msg_text += "\n👑 Owner priority processing activated!"
+        message_text = f"💾 **Your Saved Posts ({len(posts)} total):**\n\n"
         
-        processing_msg = await update.message.reply_text(processing_msg_text)
+        for i, post in enumerate(posts[-10:], 1):  # Show last 10 posts
+            date = post.get('saved_date', 'Unknown')[:16]
+            channel = post.get('channel', 'Unknown')[:25]
+            preview = post.get('text', '')[:50] + "..." if len(post.get('text', '')) > 50 else post.get('text', '')
+            
+            message_text += f"**{i}.** {channel}\n"
+            message_text += f"📅 {date}\n"
+            message_text += f"📝 {preview}\n"
+            message_text += f"🔗 [View Original]({post.get('link', '#')})\n\n"
+        
+        if len(posts) > 10:
+            message_text += f"... and {len(posts) - 10} more posts\n"
+        
+        keyboard = [
+            [InlineKeyboardButton("📊 Statistics", callback_data="stats"),
+             InlineKeyboardButton("🗑️ Clear All", callback_data="clear_all")],
+            [InlineKeyboardButton("🔙 Back to Menu", callback_data="start")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
+            message_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=reply_markup,
+            disable_web_page_preview=True
+        )
+    
+    async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle incoming messages (links)"""
+        text = update.message.text
+        user_id = str(update.effective_user.id)
+        
+        # Log user activity
+        logger.info(f"User {user_id} sent: {text[:50]}...")
+        
+        # Check if message contains a Telegram link
+        telegram_link_pattern = r'https?://t\.me/[\w\d_/]+'
+        matches = re.findall(telegram_link_pattern, text)
+        
+        if matches:
+            await self.process_telegram_link(update, matches[0])
+        else:
+            await update.message.reply_text(
+                "🔗 **Send me a Telegram post link!**\n\n"
+                "Example: `t.me/channel/123` or `t.me/c/123456/789`\n\n"
+                "Use /help for more information.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+    
+    async def process_telegram_link(self, update: Update, link: str):
+        """Process Telegram link and save post"""
+        user_id = str(update.effective_user.id)
+        
+        # Check rate limits (free users)
+        posts = await self.get_user_data(user_id)
+        today_posts = [p for p in posts if p.get('saved_date', '').startswith(datetime.now().strftime('%Y-%m-%d'))]
+        
+        if len(today_posts) >= 10:  # Free limit
+            await update.message.reply_text(
+                "⚠️ **Daily limit reached!**\n\n"
+                "Free users can save 10 posts per day.\n"
+                "Upgrade to Premium for unlimited saves!\n\n"
+                "Use /premium to learn more.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
+        
+        # Send processing message
+        processing_msg = await update.message.reply_text(
+            "🔄 **Processing your link...**\n\n"
+            f"📊 Daily usage: {len(today_posts) + 1}/10\n"
+            "⏳ Fetching post content...",
+            parse_mode=ParseMode.MARKDOWN
+        )
         
         try:
-            # Extract channel and message info from link
-            link_info = self.parse_telegram_link(link)
-            if not link_info:
-                await processing_msg.edit_text(
-                    "❌ **Invalid Link Format**\n\n"
-                    "Please send a valid Telegram link.\n"
-                    "Examples:\n"
-                    "• `https://t.me/channel_name/123`\n"
-                    "• `https://t.me/c/1234567890/123`",
-                    parse_mode=ParseMode.MARKDOWN
-                )
-                return
+            # Simulate processing delay
+            await asyncio.sleep(2)
             
-            channel_username, message_id = link_info
+            # Extract channel info from link
+            channel_info = self.extract_channel_info(link)
             
-            # Check if user needs to login for private channels
-            needs_login = False
-            if channel_username.isdigit():  # Private channel (c/channel_id format)
-                needs_login = True
-                if user_id not in self.user_sessions or not self.user_sessions[user_id].client:
-                    await processing_msg.edit_text(
-                        "🔐 **Private Channel Detected**\n\n"
-                        "This appears to be a private channel link.\n"
-                        "Please use `/login` first to authenticate your account.\n\n"
-                        "After logging in, send the link again.",
-                        parse_mode=ParseMode.MARKDOWN
-                    )
-                    return
+            # In production, you would fetch actual content here
+            # For now, simulate with sample content
+            post_data = {
+                'id': len(posts) + 1,
+                'link': link,
+                'channel': channel_info.get('channel', 'Unknown Channel'),
+                'message_id': channel_info.get('message_id', '0'),
+                'text': await self.simulate_content_fetch(link, channel_info),
+                'media_type': 'text',
+                'saved_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'user_id': user_id,
+                'type': channel_info.get('type', 'unknown')
+            }
             
-            # Simulate processing with better feedback
-            processing_steps = [
-                "⏳ Connecting to Telegram...",
-                "🔍 Locating channel...",
-                "📥 Fetching message content...",
-                "💾 Processing and saving..."
-            ]
+            # Save post
+            posts.append(post_data)
+            await self.save_user_data(user_id, posts)
             
-            for i, step in enumerate(processing_steps):
-                await processing_msg.edit_text(f"{step}\n{'▓' * (i + 1)}{'░' * (len(processing_steps) - i - 1)}")
-                await asyncio.sleep(0.3 if user_id == self.owner_id else 0.5)
+            # Log successful save
+            logger.info(f"User {user_id} saved post from {post_data['channel']}")
             
-            # Increment usage counter
-            self.increment_usage(user_id)
-            
+            # Update processing message
             success_text = f"""
-✅ **Message Saved Successfully!**
+✅ **Post Saved Successfully!**
 
-📋 **Details:**
-• Channel: {'@' + channel_username if not channel_username.isdigit() else 'Private Channel'}
-• Message ID: {message_id}
-• Saved at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-"""
-            
-            # Show remaining usage
-            can_use_again, usage_msg = self.can_use_bot(user_id)
-            if user_id == self.owner_id:
-                success_text += "• Status: 👑 Owner Priority Processing\n• Speed: ⚡ Maximum Performance\n• Usage: ∞ Unlimited\n"
-            else:
-                success_text += f"• Usage Status: {usage_msg}\n"
-            
-            success_text += """
-📁 **Content:** 
-The message has been processed and saved to your account.
+📺 **Channel**: {post_data['channel']}
+🆔 **Post ID**: #{post_data['id']}
+🔗 **Original Link**: [View Post]({link})
+💾 **Saved**: {post_data['saved_date']}
+📊 **Daily Usage**: {len(today_posts) + 1}/10
 
-🔄 **What's Next:**
-• Send another link to save more messages
-• Use /status to check your usage
-• Use /help for more options
+**Content Preview:**
+{post_data['text'][:200]}{'...' if len(post_data['text']) > 200 else ''}
             """
             
             keyboard = [
-                [InlineKeyboardButton("📱 Save Another", callback_data="save_another")],
-                [InlineKeyboardButton("📊 View Status", callback_data="view_status")]
+                [InlineKeyboardButton("💾 View All Saves", callback_data="my_saves"),
+                 InlineKeyboardButton("📊 Statistics", callback_data="stats")],
+                [InlineKeyboardButton("⭐ Upgrade Premium", callback_data="premium")]
             ]
-            
-            if user_id == self.owner_id:
-                keyboard.insert(0, [InlineKeyboardButton("👑 Owner Dashboard", callback_data="owner_dashboard")])
-            
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             await processing_msg.edit_text(
                 success_text,
                 parse_mode=ParseMode.MARKDOWN,
-                reply_markup=reply_markup
+                reply_markup=reply_markup,
+                disable_web_page_preview=True
             )
             
         except Exception as e:
-            logger.error(f"Error handling telegram link: {e}")
+            logger.error(f"Error processing link for user {user_id}: {e}")
             await processing_msg.edit_text(
-                "❌ **Error Processing Link**\n\n"
-                "Something went wrong while processing your request.\n"
-                "This could be due to:\n"
-                "• Invalid or inaccessible link\n"
-                "• Network connection issues\n"
-                "• Private channel requiring authentication\n\n"
-                "Please try again or contact support."
+                "❌ **Error processing link**\n\n"
+                "Please try again or contact support if the issue persists.",
+                parse_mode=ParseMode.MARKDOWN
             )
-
-    # Include all other methods from the original code...
-    # (All other methods remain the same as in your original code)
     
-    def parse_telegram_link(self, link: str) -> Optional[Tuple[str, int]]:
-        """Parse Telegram link to extract channel and message ID"""
-        patterns = [
-            r'https?://t\.me/([^/]+)/(\d+)',
-            r'https?://t\.me/c/(\d+)/(\d+)',
-            r'https?://telegram\.me/([^/]+)/(\d+)'
+    async def simulate_content_fetch(self, link: str, channel_info: Dict) -> str:
+        """Simulate content fetching (replace with actual API calls)"""
+        channel_name = channel_info.get('channel', 'Unknown')
+        message_id = channel_info.get('message_id', '0')
+        
+        sample_contents = [
+            f"📱 **Message from {channel_name}**\n\nThis is a sample message fetched from Telegram. In production, this would contain the actual post content including text, media, and formatting.",
+            f"🔥 **Hot Post Alert!**\n\nAmazing content from {channel_name}! This post contains valuable information that you've successfully saved for later reference.",
+            f"💎 **Premium Content**\n\nExclusive content from {channel_name}. You now have offline access to this post even if it gets deleted from the original channel.",
+            f"📰 **News Update**\n\nBreaking: Important update from {channel_name}. Stay informed with the latest developments by saving posts like this one."
         ]
         
-        for pattern in patterns:
-            match = re.search(pattern, link)
-            if match:
-                channel, message_id = match.groups()
-                return channel, int(message_id)
+        import random
+        return random.choice(sample_contents)
+    
+    def extract_channel_info(self, link: str) -> Dict:
+        """Extract channel information from Telegram link"""
+        # Pattern for t.me/channel/123
+        public_pattern = r't\.me/([^/]+)/(\d+)'
+        public_match = re.search(public_pattern, link)
         
-        return None
-
-    # ... (include all other methods from your original code here)
-
-async def test_bot_token():
-    """Test if the bot token is valid"""
-    try:
-        app = Application.builder().token(BOT_TOKEN).build()
-        async with app:
-            bot_info = await app.bot.get_me()
-            print(f"✅ Bot token is valid!")
-            print(f"   Bot name: {bot_info.first_name}")
-            print(f"   Bot username: @{bot_info.username}")
-            print(f"   Bot ID: {bot_info.id}")
-            return True
-    except Exception as e:
-        print(f"❌ Bot token validation failed: {e}")
-        print("\n💡 How to fix:")
-        print("   1. Go to @BotFather on Telegram")
-        print("   2. Send /token and select your bot")
-        print("   3. Copy the new token to your .env file")
-        print("   4. Make sure BOT_TOKEN=your_token_here (no spaces)")
-        return False
-
-def main():
-    """Start the bot with better error handling"""
-    try:
-        print("🔧 Validating bot configuration...")
+        if public_match:
+            return {
+                'channel': f"@{public_match.group(1)}",
+                'message_id': public_match.group(2),
+                'type': 'public'
+            }
         
-        # Test bot token first
-        if not asyncio.run(test_bot_token()):
+        # Pattern for t.me/c/123456/789
+        private_pattern = r't\.me/c/(\d+)/(\d+)'
+        private_match = re.search(private_pattern, link)
+        
+        if private_match:
+            return {
+                'channel': f"Private Channel ({private_match.group(1)})",
+                'message_id': private_match.group(2),
+                'type': 'private'
+            }
+        
+        return {'channel': 'Unknown', 'message_id': '0', 'type': 'unknown'}
+    
+    async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle inline keyboard button presses"""
+        query = update.callback_query
+        await query.answer()
+        
+        try:
+            if query.data == "help":
+                await self.help_command(update, context)
+            elif query.data == "my_saves":
+                await self.saves_command_callback(update, context)
+            elif query.data == "premium":
+                await self.premium_info(update, context)
+            elif query.data == "stats":
+                await self.stats_command_callback(update, context)
+            elif query.data == "start":
+                await self.start_command_callback(update, context)
+            elif query.data == "clear_all":
+                await self.clear_saves(update, context)
+        except Exception as e:
+            logger.error(f"Error in button handler: {e}")
+            await query.edit_message_text("❌ An error occurred. Please try again.")
+    
+    async def saves_command_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle saves command from callback"""
+        user_id = str(update.effective_user.id)
+        posts = await self.get_user_data(user_id)
+        
+        if not posts:
+            await update.callback_query.edit_message_text(
+                "📭 **No saved posts yet!**\n\nSend me a Telegram post link to get started!",
+                parse_mode=ParseMode.MARKDOWN
+            )
             return
         
-        print("🚀 Starting bot...")
+        message_text = f"💾 **Your Saved Posts ({len(posts)} total):**\n\n"
         
-        # Create bot instance
-        bot = SaveAnyRestrictedBot()
+        for i, post in enumerate(posts[-5:], 1):  # Show last 5 for callback
+            date = post.get('saved_date', 'Unknown')[:16]
+            channel = post.get('channel', 'Unknown')[:20]
+            preview = post.get('text', '')[:40] + "..." if len(post.get('text', '')) > 40 else post.get('text', '')
+            
+            message_text += f"**{i}.** {channel}\n📅 {date}\n📝 {preview}\n\n"
         
-        # Create application
-        application = Application.builder().token(BOT_TOKEN).build()
+        if len(posts) > 5:
+            message_text += f"... and {len(posts) - 5} more posts\n"
+        
+        keyboard = [
+            [InlineKeyboardButton("📊 Statistics", callback_data="stats")],
+            [InlineKeyboardButton("🗑️ Clear All", callback_data="clear_all")],
+            [InlineKeyboardButton("🔙 Back to Menu", callback_data="start")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.callback_query.edit_message_text(
+            message_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=reply_markup
+        )
+    
+    async def stats_command_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle stats command from callback"""
+        user_id = str(update.effective_user.id)
+        posts = await self.get_user_data(user_id)
+        
+        total_saves = len(posts)
+        today_saves = len([p for p in posts if p.get('saved_date', '').startswith(datetime.now().strftime('%Y-%m-%d'))])
+        
+        stats_text = f"""
+📊 **Your Statistics**
+
+📈 **Total Saves**: {total_saves}
+📅 **Today**: {today_saves}/10 (Free Plan)
+💾 **Storage Used**: {len(str(posts))} bytes
+⏰ **Member Since**: {posts[0].get('saved_date', 'Unknown')[:10] if posts else 'Today'}
+
+**Plan**: Free (Upgrade for unlimited saves!)
+        """
+        
+        keyboard = [
+            [InlineKeyboardButton("⭐ Upgrade Premium", callback_data="premium")],
+            [InlineKeyboardButton("🔙 Back to Menu", callback_data="start")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.callback_query.edit_message_text(
+            stats_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=reply_markup
+        )
+    
+    async def start_command_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle start command from callback"""
+        welcome_message = """
+🚀 **Welcome to Post Saver Bot!** 
+
+**What I Can Do:**
+✨ Save posts from channels and groups where forwarding is restricted
+✨ Easily fetch messages from public channels by sending their post links
+✨ For private channels, use /login to access content securely
+✨ Need assistance? Just type /help and I'll guide you!
+
+Premium users enjoy faster processing, unlimited saves, and priority support.
+
+📌 **Getting Started:**
+✅ Send a post link from a public channel to save it instantly
+✅ For additional commands, check /help anytime!
+
+Happy saving! 🚀
+        """
+        
+        keyboard = [
+            [InlineKeyboardButton("📋 Help", callback_data="help"),
+             InlineKeyboardButton("💾 My Saves", callback_data="my_saves")],
+            [InlineKeyboardButton("⭐ Premium", callback_data="premium")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.callback_query.edit_message_text(
+            welcome_message,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=reply_markup
+        )
+    
+    async def premium_info(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show premium information"""
+        premium_text = """
+⭐ **Premium Features**
+
+**What you get with Premium:**
+🚀 **Unlimited Saves** - No daily limits
+⚡ **Priority Processing** - 3x faster response
+🔐 **Private Channel Access** - Access restricted content
+📱 **Advanced Features** - Media downloads, bulk operations
+💬 **Priority Support** - Direct support channel
+📊 **Advanced Analytics** - Detailed usage statistics
+🎯 **Custom Categories** - Organize your saves
+
+**Pricing:**
+💎 **Monthly**: $4.99/month
+💎 **Yearly**: $49.99/year (Save 17%!)
+💎 **Lifetime**: $99.99 (One-time payment)
+
+**Current Plan**: Free (10 saves/day)
+
+Ready to unlock unlimited potential?
+        """
+        
+        keyboard = [
+            [InlineKeyboardButton("💳 Monthly ($4.99)", url="https://t.me/your_payment_bot?start=monthly")],
+            [InlineKeyboardButton("💳 Yearly ($49.99)", url="https://t.me/your_payment_bot?start=yearly")],
+            [InlineKeyboardButton("💳 Lifetime ($99.99)", url="https://t.me/your_payment_bot?start=lifetime")],
+            [InlineKeyboardButton("🔙 Back to Menu", callback_data="start")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.callback_query.edit_message_text(
+            premium_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=reply_markup
+        )
+    
+    async def clear_saves(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Clear user's saved posts"""
+        user_id = str(update.effective_user.id)
+        
+        await self.save_user_data(user_id, [])
+        logger.info(f"User {user_id} cleared all saves")
+        
+        await update.callback_query.edit_message_text(
+            "🗑️ **All saves cleared!**\n\n"
+            "Your saved posts have been deleted.\n"
+            "Start fresh by sending new post links!",
+            parse_mode=ParseMode.MARKDOWN
+        )
+    
+    async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE):
+        """Log errors"""
+        logger.error(f"Exception while handling an update: {context.error}")
+    
+    def setup_application(self):
+        """Setup the bot application"""
+        application = Application.builder().token(self.bot_token).build()
         
         # Add handlers
-        application.add_handler(CommandHandler("start", bot.start_command))
-        application.add_handler(CommandHandler("login", bot.login_command))
-        application.add_handler(CommandHandler("logout", bot.logout_command))
-        application.add_handler(CommandHandler("help", bot.help_command))
-        application.add_handler(CommandHandler("status", bot.status_command))
-        application.add_handler(CommandHandler("token", bot.token_command))
-        application.add_handler(CommandHandler("owner", bot.owner_command))
-        application.add_handler(CallbackQueryHandler(bot.callback_handler))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
+        application.add_handler(CommandHandler("start", self.start_command))
+        application.add_handler(CommandHandler("help", self.help_command))
+        application.add_handler(CommandHandler("saves", self.saves_command))
+        application.add_handler(CommandHandler("stats", self.stats_command))
+        application.add_handler(CallbackQueryHandler(self.button_handler))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
         
-        # Run the bot
-        print("✅ Bot is running successfully!")
-        print("   Press Ctrl+C to stop")
+        # Add error handler
+        application.add_error_handler(self.error_handler)
+        
+        return application
+    
+    async def run_webhook(self):
+        """Run bot with webhook (for production)"""
+        application = self.setup_application()
+        
+        # Set webhook
+        await application.bot.set_webhook(
+            url=f"{self.webhook_url}/webhook",
+            allowed_updates=Update.ALL_TYPES
+        )
+        
+        # Start webhook server
+        await application.run_webhook(
+            listen="0.0.0.0",
+            port=self.port,
+            webhook_url=f"{self.webhook_url}/webhook"
+        )
+    
+    def run_polling(self):
+        """Run bot with polling (for development)"""
+        application = self.setup_application()
+        
+        logger.info("🚀 Starting bot in polling mode...")
+        logger.info(f"Environment: {self.environment}")
+        logger.info(f"Redis: {'✅ Connected' if self.redis_client else '❌ Not connected'}")
+        
         application.run_polling(allowed_updates=Update.ALL_TYPES)
-        
-    except KeyboardInterrupt:
-        print("\n👋 Bot stopped by user")
-    except Exception as e:
-        logger.error(f"Critical error: {e}")
-        print(f"❌ Critical error: {e}")
 
-if __name__ == '__main__':
-    main()
+# Main execution
+async def main():
+    try:
+        bot = TelegramPostSaver()
+        
+        if bot.environment == 'production' and bot.webhook_url:
+            logger.info("🌐 Starting in webhook mode for production...")
+            await bot.run_webhook()
+        else:
+            logger.info("🔄 Starting in polling mode for development...")
+            bot.run_polling()
+            
+    except Exception as e:
+        logger.error(f"❌ Failed to start bot: {e}")
+        raise
+
+if __name__ == "__main__":
+    asyncio.run(main())
