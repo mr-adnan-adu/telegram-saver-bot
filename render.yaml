@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: telegram-post-saver-bot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: bot-redis
+      - key: ENVIRONMENT
+        value: production
+      - key: WEBHOOK_URL
+        value: https://telegram-post-saver-bot.onrender.com
+
+  - type: redis
+    name: bot-redis
+    plan: starter
+    maxmemoryPolicy: allkeys-lru
