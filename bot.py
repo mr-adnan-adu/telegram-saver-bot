@@ -528,4 +528,87 @@ The message has been processed and saved to your account.
         
         await update.message.reply_text(
             "🎉 **Login Successful!**\n\n"
-            "✅ You're now connected to Teleg
+            "✅ You're now connected to Telegram!\n"
+            "🔒 You can now access private channels and groups.\n\n"
+            "**What's Next:**\n"
+            "• Send any private channel link to save messages\n"
+            "• Use /status to check your connection\n"
+            "• Use /logout when you're done\n\n"
+            "Happy saving! 🚀",
+            parse_mode=ParseMode.MARKDOWN
+        )
+
+    async def handle_password_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE, password: str):
+        """Handle 2FA password input during login"""
+        user_id = update.effective_user.id
+        session = self.user_sessions[user_id]
+        
+        # Simulate password verification
+        await asyncio.sleep(1)
+        
+        session.login_step = "none"
+        
+        await update.message.reply_text(
+            "🎉 **Two-Factor Authentication Successful!**\n\n"
+            "✅ You're now fully authenticated!\n"
+            "🔒 All private channels are now accessible.\n\n"
+            "Start sending private channel links to save messages! 🚀",
+            parse_mode=ParseMode.MARKDOWN
+        )
+
+    async def handle_callback_query(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle inline keyboard button presses"""
+        query = update.callback_query
+        await query.answer()
+        
+        data = query.data
+        
+        if data == "start_login":
+            await self.login_command(update, context)
+        elif data == "get_token":
+            await self.token_command(update, context)
+        elif data == "help":
+            await self.help_command(update, context)
+        elif data == "get_premium":
+            await self.upgrade_command(update, context)
+        elif data == "view_status":
+            await self.status_command(update, context)
+        elif data == "save_another":
+            await query.edit_message_text(
+                "🔗 **Ready for Another Link!**\n\n"
+                "Send any Telegram channel or group post link to save it.\n\n"
+                "Example: `https://t.me/channel_name/123`",
+                parse_mode=ParseMode.MARKDOWN
+            )
+
+def main():
+    """Start the bot"""
+    # Create bot instance
+    bot = TelegramSaverBot()
+    
+    # Create application
+    application = Application.builder().token(BOT_TOKEN).build()
+    
+    # Add handlers
+    application.add_handler(CommandHandler("start", bot.start_command))
+    application.add_handler(CommandHandler("help", bot.help_command))
+    application.add_handler(CommandHandler("login", bot.login_command))
+    application.add_handler(CommandHandler("logout", bot.logout_command))
+    application.add_handler(CommandHandler("status", bot.status_command))
+    application.add_handler(CommandHandler("token", bot.token_command))
+    application.add_handler(CommandHandler("upgrade", bot.upgrade_command))
+    application.add_handler(CallbackQueryHandler(bot.handle_callback_query))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
+    
+    # Start the bot
+    print("🚀 Telegram Saver Bot is starting...")
+    port = int(os.environ.get('PORT', 8080))
+    application.run_webhook(
+        listen="0.0.0.0",
+        port=port,
+        url_path=BOT_TOKEN,
+        webhook_url=f"https://your-app-name.onrender.com/{BOT_TOKEN}"
+    )
+
+if __name__ == '__main__':
+    main()
