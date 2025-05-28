@@ -705,7 +705,7 @@ The message has been processed and saved to your account.
                 parse_mode=ParseMode.MARKDOWN
             )
 
-    def parse_telegram_link(self, link: str) -> Optional[tuple]:
+    def parse_telegram_link(self, pattern: str) -> Optional[tuple]:
         """Parse Telegram link and extract channel and message ID"""
         patterns = [
             r'https?://t\.me/(\w+)/(\d+)',
@@ -714,10 +714,9 @@ The message has been processed and saved to your account.
         ]
         
         for pattern in patterns:
-            match = re.search(pattern, link)
+            match = re.search(pattern, pattern)
             if match:
                 return (match.group(1), int(match.group(2)))
-        
         return None
 
     async def handle_phone_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE, phone: str):
@@ -742,12 +741,12 @@ The message has been processed and saved to your account.
         # Simulate sending code
         code_msg = f"📨 **Verification Code Sent!**\n\n"
         if user_id == self.owner_id:
-            code_msg += "👑 **Owner Login:** Priority code delivery activated.\n\n"
+            code_msg += "👑 **Owner Login:** Priority processing activated.\n\n"
         
         code_msg += (f"A verification code has been sent to {phone}\n\n"
-                     "Please send the 5-digit code you received.\n"
-                     "Example: `12345`\n\n"
-                     "⏰ Code expires in 5 minutes.")
+                    "Please send the 5-digit code you received.\n"
+                    "Example: `12345`\n\n"
+                    "⏰ Code expires in 5 minutes.")
         
         await update.message.reply_text(
             code_msg,
@@ -781,8 +780,7 @@ The message has been processed and saved to your account.
         
         success_msg += ("✅ You're now connected to Telegram!\n"
                         "🔒 You can now access private channels and groups.\n\n"
-                        "**What'sburgo
-What's Next:**\n"
+                        "**What's Next:**\n"
                         "• Send any private channel link to save messages\n"
                         "• Use /status to check your connection\n"
                         "• Use /logout when you're done\n\n")
@@ -883,7 +881,7 @@ What's Next:**\n"
         free_users = total_users - premium_users
         
         stats_text = f"""
-📊 **Detailed Bot Statistics**
+📊 **Detailed Statistics**
 
 **👥 User Statistics:**
 • Total Users: {total_users}
