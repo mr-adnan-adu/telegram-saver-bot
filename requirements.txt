@@ -1,7 +1,6 @@
 python-telegram-bot==20.7
 telethon==1.34.0
 asyncio
-logging
 re
 urllib3
 dataclasses
