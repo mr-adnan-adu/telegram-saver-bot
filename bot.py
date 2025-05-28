@@ -1,9 +1,10 @@
+import os
 import asyncio
 import logging
 import re
 import time
 from datetime import datetime, timedelta
-from typing import Dict, Optional, Set
+from typing import Dict, Optional, Set, Tuple
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -25,12 +26,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Bot configuration
-BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
-API_ID = "YOUR_API_ID_HERE"  # Get from https://my.telegram.org
-API_HASH = "YOUR_API_HASH_HERE"  # Get from https://my.telegram.org
-
-# Owner configuration
-OWNER_ID = 1980071557  # Owner gets unlimited premium access
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+API_ID = os.getenv("API_ID")
+API_HASH = os.getenv("API_HASH")
+OWNER_ID = int(os.getenv("OWNER_ID", "1980071557"))  # Fallback to 1980071557 if not set
 
 @dataclass
 class UserSession:
@@ -85,10 +84,10 @@ class Save_Any_Restricted_robot:
 🚀 **Welcome Back, Boss!** 👑
 
 **Owner Privileges Active:**
-✨ Unlimited premium access forever
-✨ All features unlocked without restrictions
-✨ Priority processing and support
-✨ Access to admin commands
+🔹 Unlimited premium access forever
+🔹 All features unlocked without restrictions
+🔹 Priority processing and support
+🔹 Access to admin commands
 
 **What You Can Do:**
 🔹 Save posts from any channel (public/private) without limits
@@ -108,10 +107,10 @@ Ready to save unlimited content! 🚀👑
 🚀 **Welcome to Channel Saver Bot!**
 
 **What I Can Do:**
-✨ Save posts from channels and groups where forwarding is restricted
-✨ Easily fetch messages from public channels by sending their post links
-✨ For private channels, use /login to access content securely
-✨ Need assistance? Just type /help and I'll guide you!
+🔹 Save posts from channels and groups where forwarding is restricted
+🔹 Easily fetch messages from public channels by sending their post links
+🔹 For private channels, use /login to access content securely
+🔹 Need assistance? Just type /help and I'll guide you!
 
 💎 **Premium Features:**
 🔹 Use /token to get 3 hours of free premium access
@@ -705,7 +704,7 @@ The message has been processed and saved to your account.
                 parse_mode=ParseMode.MARKDOWN
             )
 
-    def parse_telegram_link(self, pattern: str) -> Optional[tuple]:
+    def parse_telegram_link(self, pattern: str) -> Optional[Tuple[str, int]]:
         """Parse Telegram link and extract channel and message ID"""
         patterns = [
             r'https?://t\.me/(\w+)/(\d+)',
@@ -764,7 +763,8 @@ The message has been processed and saved to your account.
                 "❌ **Invalid Code Format**\n\n"
                 "Please send the 5-digit verification code.\n"
                 "Example: `12345`\n\n"
-                "Check your messages and try again:"
+                "Check your messages and try again:",
+                parse_mode=ParseMode.MARKDOWN
             )
             return
         
@@ -937,7 +937,7 @@ The message has been processed and saved to your account.
                           if hasattr(session, 'last_activity'))  # Simulated
         
         detailed_text = f"""
-📈 **Advanced Analytics Dashboard**
+📈 **Advanced Diagnostics Dashboard**
 
 **🔍 Detailed Metrics:**
 • Total Bot Sessions: {len(self.user_sessions)}
@@ -958,7 +958,7 @@ The message has been processed and saved to your account.
 
 **📊 Growth Metrics:**
 • New Users Today: 12
-• Returning Users: 34
+• Returning Users: 26
 • Premium Upgrades: 3
 • Support Tickets: 2
 
@@ -982,11 +982,21 @@ The message has been processed and saved to your account.
 
 def main():
     """Start the bot"""
+    if not BOT_TOKEN:
+        print("❌ Error: BOT_TOKEN environment variable is not set.")
+        return
+    if not API_ID or not API_HASH:
+        print("⚠️ Warning: API_ID and API_HASH are not set. Private channel access may not work.")
+    
     # Create bot instance
     bot = Save_Any_Restricted_robot()
     
     # Create application
-    application = Application.builder().token(BOT_TOKEN).build()
+    try:
+        application = Application.builder().token(BOT_TOKEN).build()
+    except Exception as e:
+        print(f"❌ Error initializing bot: {e}")
+        return
     
     # Add handlers
     application.add_handler(CommandHandler("start", bot.start_command))
@@ -996,12 +1006,12 @@ def main():
     application.add_handler(CommandHandler("status", bot.status_command))
     application.add_handler(CommandHandler("token", bot.token_command))
     application.add_handler(CommandHandler("upgrade", bot.upgrade_command))
-    application.add_handler(CommandHandler("owner", bot.owner_command))  # New owner command
+    application.add_handler(CommandHandler("owner", bot.owner_command))
     application.add_handler(CallbackQueryHandler(bot.handle_callback_query))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
     
     # Start the bot
-    print("🚀 Telegram Saver Bot is starting...")
+    print("🚗 Save_AnyBot is starting...")
     print(f"👑 Owner ID configured: {OWNER_ID}")
     application.run_polling()
 
