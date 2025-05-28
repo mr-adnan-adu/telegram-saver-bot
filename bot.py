@@ -42,7 +42,7 @@ class UserSession:
     login_step: str = "none"  # none, phone, code, password
     is_owner: bool = False
     
-class TelegramSaverBot:
+class Save_Any_Restricted_robot:
     def __init__(self):
         self.user_sessions: Dict[int, UserSession] = {}
         self.premium_tokens: Set[str] = {"PREMIUM2024", "SAVE3HOURS", "FREEACCESS"}
@@ -983,7 +983,7 @@ The message has been processed and saved to your account.
 def main():
     """Start the bot"""
     # Create bot instance
-    bot = TelegramSaverBot()
+    bot = Save_Any_Restricted_robot()
     
     # Create application
     application = Application.builder().token(BOT_TOKEN).build()
