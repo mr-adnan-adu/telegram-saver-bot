@@ -745,16 +745,16 @@ The message has been processed and saved to your account.
             code_msg += "👑 **Owner Login:** Priority code delivery activated.\n\n"
         
         code_msg += (f"A verification code has been sent to {phone}\n\n"
-                    "Please send the 5-digit code you received.\n"
-                    "Example: `12345`\n\n"
-                    "⏰ Code expires in 5 minutes.")
+                     "Please send the 5-digit code you received.\n"
+                     "Example: `12345`\n\n"
+                     "⏰ Code expires in 5 minutes.")
         
         await update.message.reply_text(
             code_msg,
             parse_mode=ParseMode.MARKDOWN
         )
 
-            async def handle_code_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE, code: str):
+    async def handle_code_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE, code: str):
         """Handle verification code input during login"""
         user_id = update.effective_user.id
         session = self.user_sessions[user_id]
@@ -781,7 +781,8 @@ The message has been processed and saved to your account.
         
         success_msg += ("✅ You're now connected to Telegram!\n"
                         "🔒 You can now access private channels and groups.\n\n"
-                        "**What's Next:**\n"
+                        "**What'sburgo
+What's Next:**\n"
                         "• Send any private channel link to save messages\n"
                         "• Use /status to check your connection\n"
                         "• Use /logout when you're done\n\n")
