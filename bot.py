@@ -48,9 +48,8 @@ class TelegramPostSaver:
 🚀 **Welcome to Post Saver Bot!** 
 
 **What I Can Do:**
-✨ Save posts from channels and groups where forwarding is restricted
+✨ Save posts from public channels and groups
 ✨ Easily fetch messages from public channels by sending their post links
-✨ For private channels, use /login to access content securely
 ✨ Need assistance? Just type /help and I'll guide you!
 
 Premium users enjoy faster processing, unlimited saves, and priority support.
@@ -80,12 +79,11 @@ Happy saving! 🚀
         help_text = """
 📖 **Bot Commands & Features:**
 
-🔗 **Send a Link**: Just paste any Telegram post link and I'll save it for you!
+🔗 **Send a Link**: Just paste any public Telegram post link and I'll save it for you!
 
 **Commands:**
 • `/start` - Welcome message and main menu
 • `/help` - Show this help message
-• `/login` - Login to access private channels (Premium)
 • `/saves` - View your saved posts
 • `/delete <id>` - Delete a saved post
 • `/clear` - Clear all your saved posts
@@ -93,48 +91,16 @@ Happy saving! 🚀
 
 **Supported Links:**
 • `t.me/channel/123` - Public channel posts
-• `t.me/c/123456/789` - Private channel posts (with login)
 
 **Premium Features:**
 ⚡ Unlimited saves
 🚀 Faster processing
-🔐 Private channel access
 💬 Priority support
 
 Need more help? Contact @support
         """
         
         await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
-    
-    async def login_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /login command for private channels"""
-        user_id = update.effective_user.id
-        
-        login_text = """
-🔐 **Private Channel Access**
-
-To access private channels, you need to:
-
-1️⃣ **Upgrade to Premium** - Private channel access is a premium feature
-2️⃣ **Authorize the bot** - Grant access to your Telegram account
-3️⃣ **Send private links** - The bot will fetch content using your permissions
-
-⚠️ **Security Note**: We use secure authentication and never store your credentials.
-
-Ready to upgrade?
-        """
-        
-        keyboard = [
-            [InlineKeyboardButton("⭐ Upgrade to Premium", callback_data="premium")],
-            [InlineKeyboardButton("🔙 Back to Menu", callback_data="start")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(
-            login_text,
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=reply_markup
-        )
     
     async def saves_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /saves command"""
@@ -190,7 +156,7 @@ Ready to upgrade?
         else:
             await update.message.reply_text(
                 "🔗 **Send me a Telegram post link!**\n\n"
-                "Example: `t.me/channel/123` or `t.me/c/123456/789`\n\n"
+                "Example: `t.me/channel/123`\n\n"
                 "Use /help for more information.",
                 parse_mode=ParseMode.MARKDOWN
             )
@@ -210,6 +176,16 @@ Ready to upgrade?
         
         # Extract channel info from link
         channel_info = self.extract_channel_info(link)
+        
+        # Check if it's a private channel link
+        if channel_info.get('type') == 'private':
+            await processing_msg.edit_text(
+                "❌ **Private Channel Not Supported**\n\n"
+                "This bot only supports public channels. Please send a public channel link.\n\n"
+                "Example: `t.me/channelname/123`",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
         
         # Simulate fetched content
         post_data = {
@@ -304,7 +280,6 @@ Ready to upgrade?
 **What you get with Premium:**
 🚀 **Unlimited Saves** - No daily limits
 ⚡ **Priority Processing** - Faster response times
-🔐 **Private Channel Access** - Access restricted content
 📱 **Advanced Features** - Media downloads, bulk operations
 💬 **Priority Support** - Direct support channel
 
@@ -350,7 +325,6 @@ Ready to upgrade?
         # Add handlers
         application.add_handler(CommandHandler("start", self.start_command))
         application.add_handler(CommandHandler("help", self.help_command))
-        application.add_handler(CommandHandler("login", self.login_command))
         application.add_handler(CommandHandler("saves", self.saves_command))
         application.add_handler(CallbackQueryHandler(self.button_handler))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
